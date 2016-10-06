@@ -1,0 +1,117 @@
+---
+title: "Practical Machine Learning Assignment"
+author: "Cherylyn Ee"
+date: "6 October 2016"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+# Background
+Devices such as Nike FuelBand, Fitbit are part of the quantified self movement – a group of enthusiasts who take measurements about themselves regularly to improve their health, to find patterns in their behavior, or because they are tech geeks. One thing that people regularly do is quantify how much of a particular activity they do, but they rarely quantify how well they do it. In this project, we will use data from accelerometers on the belt, forearm, arm, and dumbell of 6 participants to predict the manner in which participants did the exercise. We will use the "classe" variable in the data to predict and test on 20 test cases available in the test data set.
+
+# Data Loading & Cleansing
+The training data for this project is obtained from:
+https://d396qusza40orc.cloudfront.net/predmachlearn/pml-training.csv
+
+The test data is obtained from:
+https://d396qusza40orc.cloudfront.net/predmachlearn/pml-testing.csv
+
+```{r data load}
+traindat <- read.csv("https://d396qusza40orc.cloudfront.net/predmachlearn/pml-training.csv")
+testdat <- read.csv("https://d396qusza40orc.cloudfront.net/predmachlearn/pml-testing.csv")
+library(caret)
+library(knitr)
+library(randomForest)
+```
+
+We partition the training data (70% training, 30% validation) for cross validation purposes.
+
+```{r data part}
+set.seed(131188)
+inTrain <- createDataPartition(traindat$classe, p=0.7, list=FALSE)
+training <- traindat[inTrain,]
+testing <- traindat[-inTrain,]
+str(training)
+dim(training); dim(testing)
+```
+
+By looking at the training data, we can notice variables with too many NA values, low variance or have no relevancy to predict classe. We will remove these variables as predictors
+
+```{r data clean}
+# Remove too many NA variables
+NAvar <- sapply(training, function(x) mean(is.na(x))) > 0.95
+training <- training[, NAvar==FALSE]
+testing <- testing[, NAvar==FALSE]
+dim(training); dim(testing)
+
+# Remove Nearly Zero Variance variables
+zerovar <- nearZeroVar(training)
+training <- training[, -zerovar]
+testing <- testing[, -zerovar]
+dim(training); dim(testing)
+
+# Remove irrelevant variables
+irrel <- grep("X|user_name|timestamp|num_window", names(training))
+training <- training[,-irrel]
+testing <- testing[, -irrel]
+dim(training); dim(testing)
+```
+
+After data cleansing, number of predictors has been reduced to 53. However, this is still a large number of variables, thus, we will take a look at the importance of the predictors using Random Forest.
+
+```{r predictor importance}
+set.seed(131188)
+model_rf <- randomForest(classe ~ ., data=training, ntree = 100, importance = TRUE)
+varImpPlot(model_rf, sort = TRUE)
+```
+
+From the we can choose the top 10 variables to simplify our model. Limiting the number of variables without sacrificing too much accuracy can ensure better interpretability of the model. 
+
+Ten top predictor: yaw_belt, row_belt, magnet_dumbbell_z, pitch_belt, pitch_forearm, magnet_dumbbell_y, roll_arm, roll_forearm, accel_dumbbell_y, accel_dumbbell_z
+
+# Check correlation between predictors
+Generally, attributes with an absolute correlation of 0.75 or higher is removed.
+
+```{r predict corel}
+correlationMatrix <- cor(training[,c("yaw_belt","roll_belt","accel_dumbbell_z","pitch_belt","magnet_dumbbell_z","magnet_dumbbell_y","pitch_forearm","accel_dumbbell_y","roll_arm","roll_forearm")])
+which(abs(correlationMatrix)>0.75, arr.ind=TRUE)
+cor(training$yaw_belt, training$roll_belt)
+```
+
+yaw_belt and roll_belt show high correlation with each other 0.8156202. We will remove yaw_belt from the variables to improve the model.
+
+# Model
+
+We will use Random Forest method to model our training data with the 9 variables chosen. 
+
+```{r model}
+set.seed(131188)
+trctrl <- trainControl(method="cv", number = 3)
+model_rf_2 <- train(classe ~., data = training, method = "rf", trControl=trctrl)
+model_rf_2$finalModel
+```
+
+## Prediction
+```{r predict}
+predrf <- predict(model_rf_2, newdata = testing)
+conMat <- confusionMatrix(predrf, testing$classe)
+conMat
+predrf_full <- predict(model_rf, newdata = testing)
+conMat_full <- confusionMatrix(predrf_full, testing$classe)
+conMat_full
+```
+
+Accuracy of predictions for the 9 variables is very close to using 53 variables (0.9941 ~ 0.9964).
+
+## Out of sample error rate
+% out of sample error rate = 1 - Accuracy
+The out of sample error rate is approximately 0.6%
+```{r OOSError}
+outofsampleerror <- 1 - sum(predrf == testing$classe)/length(predrf)
+outofsampleerror
+```
+
+
